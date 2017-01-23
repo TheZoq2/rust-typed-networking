@@ -10,6 +10,7 @@ use std::net::{TcpStream, TcpListener};
 use rustc_serialize::{json, Encodable, Decodable};
 
 use std::{io, result, convert};
+use std::time::Duration;
 
 use std::io::prelude::*;
 
@@ -135,7 +136,7 @@ pub fn handle_read_reply_client<MsgType, ReplyType, Function, InputType>
   Creates a TCP listener that listens for messages of a certain type, and replies with messages
   of another type by running the reply_handler on those messages
  */
-pub fn run_read_reply_server<MsgType, ReplyType, Function>(port: u16, mut reply_handler: Function) 
+pub fn run_read_reply_server<MsgType, ReplyType, Function>(port: u16, mut reply_handler: Function)
         -> JsonHandlerResult<()>
     where MsgType: Encodable + Decodable, 
           ReplyType: Encodable + Decodable,
@@ -159,12 +160,14 @@ pub fn run_read_reply_server<MsgType, ReplyType, Function>(port: u16, mut reply_
     Connects to a remote tcp socket, sends a message, waits for a reply
     and returns that reply
 */
-pub fn connect_send_read<MsgType, ReplyType>(ip: &str, port: u16, msg: MsgType)
+pub fn connect_send_read<MsgType, ReplyType>(ip: &str, port: u16, msg: MsgType, timeout: Option<Duration>)
         -> JsonHandlerResult<ReplyType>
     where MsgType: Encodable + Decodable, ReplyType: Encodable + Decodable
 {
     let address: &str = &format!("{}:{}", ip, port);
     let mut stream = TcpStream::connect(address)?;
+    stream.set_read_timeout(timeout).unwrap();
+    stream.set_write_timeout(timeout).unwrap();
 
     send_message_read_reply::<_, ReplyType, _>(msg, &mut stream)
 }
