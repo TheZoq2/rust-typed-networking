@@ -108,7 +108,10 @@ fn string_to_bytes_with_end_marker(string: String) -> Vec<u8>
   the reply_handler function
 */
 pub fn handle_read_reply_client<MsgType, ReplyType, Function, InputType>
-                (ref mut reply_handler: Function, stream: &mut InputType)
+                (
+                    ref mut reply_handler: Function,
+                    stream: &mut InputType,
+                )
         -> JsonHandlerResult<()>
     where MsgType: Encodable + Decodable, 
           ReplyType: Encodable + Decodable,
@@ -136,7 +139,11 @@ pub fn handle_read_reply_client<MsgType, ReplyType, Function, InputType>
   Creates a TCP listener that listens for messages of a certain type, and replies with messages
   of another type by running the reply_handler on those messages
  */
-pub fn run_read_reply_server<MsgType, ReplyType, Function>(port: u16, mut reply_handler: Function)
+pub fn run_read_reply_server<MsgType, ReplyType, Function>(
+            port: u16,
+            mut reply_handler: Function,
+            timeout: Option<Duration>
+        )
         -> JsonHandlerResult<()>
     where MsgType: Encodable + Decodable, 
           ReplyType: Encodable + Decodable,
@@ -146,9 +153,14 @@ pub fn run_read_reply_server<MsgType, ReplyType, Function>(port: u16, mut reply_
     //let tcp_listener = TcpListener::bind(&format!("127.0.0.1:80", port))?;
     let tcp_listener = TcpListener::bind(address)?;
 
+
     for stream in tcp_listener.incoming()
     {
-        handle_read_reply_client(&mut reply_handler, &mut stream?)?;
+        let mut stream = stream?;
+        stream.set_read_timeout(timeout).unwrap();
+        stream.set_write_timeout(timeout).unwrap();
+
+        handle_read_reply_client(&mut reply_handler, &mut stream)?;
     }
 
     Ok(())
