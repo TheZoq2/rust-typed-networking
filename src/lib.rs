@@ -3,13 +3,19 @@
     Module for sending and receiving json serialised classes over sockets
 */
 
-extern crate rustc_serialize;
+
+extern crate serde;
+extern crate serde_json;
+
+#[macro_use]
+extern crate error_chain;
 
 use std::net::{TcpStream, TcpListener};
 
-use rustc_serialize::{json, Encodable, Decodable};
+use serde::{Serialize};
+use serde::de::{DeserializeOwned};
 
-use std::{io, result, convert};
+use std::{io};
 use std::time::Duration;
 
 use std::io::prelude::*;
@@ -23,50 +29,17 @@ const MESSAGE_END_MARKER: u8 = 1;
 ////////////////////////////////////////////////////////////////////////////////
 //                          Error struct
 ////////////////////////////////////////////////////////////////////////////////
-#[derive(Debug)]
-pub enum JsonHandlerError
-{
-    ReadFail(io::Error),
-    DecoderError(json::DecoderError),
-    EncoderError(json::EncoderError),
-    Utf8Error(std::string::FromUtf8Error),
+error_chain! {
+    foreign_links {
+        ReadFail(io::Error);
+        JsonError(serde_json::Error);
+        Utf8Error(std::string::FromUtf8Error);
+    }
 }
-pub type JsonHandlerResult<T> = result::Result<T, JsonHandlerError>;
 
-
-
-//TODO: Maybe turn into a macro
-impl convert::From<io::Error> for JsonHandlerError
-{
-    fn from(error: io::Error) -> JsonHandlerError
-    {
-        JsonHandlerError::ReadFail(error)
-    }
-}
-impl convert::From<json::DecoderError> for JsonHandlerError
-{
-    fn from(error: json::DecoderError) -> JsonHandlerError
-    {
-        JsonHandlerError::DecoderError(error)
-    }
-}
-impl convert::From<json::EncoderError> for JsonHandlerError
-{
-    fn from(error: json::EncoderError) -> JsonHandlerError
-    {
-        JsonHandlerError::EncoderError(error)
-    }
-}
-impl convert::From<std::string::FromUtf8Error> for JsonHandlerError
-{
-    fn from(error: std::string::FromUtf8Error) -> JsonHandlerError
-    {
-        JsonHandlerError::Utf8Error(error)
-    }
-}
 ////////////////////////////////////////////////////////////////////////////////
 
-fn read_string_from_stream_until_end_marker<T: io::Read>(stream: &mut T) -> JsonHandlerResult<String>
+fn read_string_from_stream_until_end_marker<T: io::Read>(stream: &mut T) -> Result<String>
 {
     const BUFFER_SIZE: usize = 128;
     let mut bytes = vec!();
@@ -109,9 +82,9 @@ fn string_to_bytes_with_end_marker(string: String) -> Vec<u8>
 */
 pub fn handle_read_reply_client<MsgType, ReplyType, Function, InputType>
                 (ref mut reply_handler: Function, stream: &mut InputType)
-        -> JsonHandlerResult<()>
-    where MsgType: Encodable + Decodable, 
-          ReplyType: Encodable + Decodable,
+        -> Result<()>
+    where MsgType: Serialize + DeserializeOwned, 
+          ReplyType: Serialize + DeserializeOwned,
           Function: FnMut(MsgType) -> ReplyType,
           InputType: Read + Write
 {
@@ -119,13 +92,13 @@ pub fn handle_read_reply_client<MsgType, ReplyType, Function, InputType>
     let buffer = read_string_from_stream_until_end_marker(stream)?;
 
     //Decode the message. If the message is not of the specified type, this fails.
-    let decoded = json::decode(&buffer)?;
+    let decoded = serde_json::from_str(&buffer)?;
 
     //Run the reply handler to get a reply
     let reply = reply_handler(decoded);
 
     //Encode the result and send it back
-    let encoded = json::encode(&reply)?;
+    let encoded = serde_json::to_string(&reply)?;
     //stream.write_all(&encoded.into_bytes())?;
     stream.write(&string_to_bytes_with_end_marker(encoded))?;
 
@@ -137,9 +110,9 @@ pub fn handle_read_reply_client<MsgType, ReplyType, Function, InputType>
   of another type by running the reply_handler on those messages
  */
 pub fn run_read_reply_server<MsgType, ReplyType, Function>(port: u16, mut reply_handler: Function)
-        -> JsonHandlerResult<()>
-    where MsgType: Encodable + Decodable, 
-          ReplyType: Encodable + Decodable,
+        -> Result<()>
+    where MsgType: Serialize + DeserializeOwned, 
+          ReplyType: Serialize + DeserializeOwned,
           Function: FnMut(MsgType) -> ReplyType
 {
     let address: &str = &format!("127.0.0.1:{}", port);
@@ -161,8 +134,8 @@ pub fn run_read_reply_server<MsgType, ReplyType, Function>(port: u16, mut reply_
     and returns that reply
 */
 pub fn connect_send_read<MsgType, ReplyType>(ip: &str, port: u16, msg: MsgType, timeout: Option<Duration>)
-        -> JsonHandlerResult<ReplyType>
-    where MsgType: Encodable + Decodable, ReplyType: Encodable + Decodable
+        -> Result<ReplyType>
+    where MsgType: Serialize + DeserializeOwned, ReplyType: Serialize + DeserializeOwned
 {
     let address: &str = &format!("{}:{}", ip, port);
     let mut stream = TcpStream::connect(address)?;
@@ -176,14 +149,14 @@ pub fn connect_send_read<MsgType, ReplyType>(ip: &str, port: u16, msg: MsgType, 
     Sends a message to an IO stream
 */
 pub fn send_message_read_reply<MsgType, ReplyType, IOType>(msg: MsgType, io_stream: &mut IOType)
-        -> JsonHandlerResult<ReplyType>
+        -> Result<ReplyType>
     where 
-        MsgType: Encodable + Decodable, 
-        ReplyType: Encodable + Decodable,
+        MsgType: Serialize + DeserializeOwned, 
+        ReplyType: Serialize + DeserializeOwned,
         IOType: Read + Write
 {
     //Encode the message as json
-    let encoded = json::encode(&msg).unwrap();
+    let encoded = serde_json::to_string(&msg).unwrap();
     let encoded_as_string = encoded.to_string();
 
     //Send it through the socket
@@ -192,7 +165,7 @@ pub fn send_message_read_reply<MsgType, ReplyType, IOType>(msg: MsgType, io_stre
     //io_stream.read_to_string(&mut buffer)?;
     let buffer = read_string_from_stream_until_end_marker(io_stream)?;
 
-    let decoded = json::decode(&buffer)?;
+    let decoded = serde_json::from_str(&buffer)?;
     Ok(decoded)
 }
 
@@ -210,7 +183,7 @@ mod json_socket_tests
     use std::io::{Read, Write};
     use std::io;
 
-    use rustc_serialize::json;
+    use serde_json;
 
     struct ReaderWriterDummy
     {
@@ -322,7 +295,7 @@ mod json_socket_tests
     #[test]
     fn send_read_test()
     {
-        let json_encoded = json::encode(&56).unwrap();
+        let json_encoded = serde_json::to_string(&56).unwrap();
 
         //Create a dummy buffer containing 56
         let mut dummy = ReaderWriterDummy::new(string_to_bytes_with_end_marker(json_encoded));
@@ -337,12 +310,12 @@ mod json_socket_tests
             x * x
         };
 
-        let mut dummy = ReaderWriterDummy::new(string_to_bytes_with_end_marker(json::encode(&10).unwrap()));
+        let mut dummy = ReaderWriterDummy::new(string_to_bytes_with_end_marker(serde_json::to_string(&10).unwrap()));
 
         assert!(handle_read_reply_client(&response_function, &mut dummy).is_ok());
         assert!(
                 dummy.get_written() == 
-                &string_to_bytes_with_end_marker(json::encode(&100).unwrap())
+                &string_to_bytes_with_end_marker(serde_json::to_string(&100).unwrap())
             );
     }
 
@@ -353,7 +326,7 @@ mod json_socket_tests
         {
             let response_function = |x|{buffer = x};
 
-            let mut dummy = ReaderWriterDummy::new(string_to_bytes_with_end_marker(json::encode(&10).unwrap()));
+            let mut dummy = ReaderWriterDummy::new(string_to_bytes_with_end_marker(serde_json::to_string(&10).unwrap()));
 
             handle_read_reply_client(response_function, &mut dummy).is_ok();
         }
